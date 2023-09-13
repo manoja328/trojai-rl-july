@@ -13,7 +13,7 @@ import torch
 import torch_ac
 import gym
 from gym_minigrid.wrappers import ImgObsWrapper
-import torch.autograd.functional as AF
+
 
 FEATS_DIR = '/workspace/manoj/rljuly2023_featuresv6'
 print("jacobians of everything ....")
@@ -21,20 +21,6 @@ os.makedirs(FEATS_DIR,exist_ok=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def get_jacobian(model, obs):
-    with torch.no_grad():
-        dist, value = model(obs)
-    def func_act(x):
-        return model(x)[0].logits.squeeze(dim=0)
-    def func_val(x):
-        return model(x)[1].squeeze(dim=0)
-    
-    # import pdb; pdb.set_trace()
-    with torch.set_grad_enabled(True):
-        action_grad = AF.jacobian(func_act,obs.float())
-        value_grad = AF.jacobian(func_val,obs.float())
-
-    return dist, value, action_grad, value_grad
 
 def infer(model_filepath):
     """Method to predict whether a model is poisoned (1) or clean (0).

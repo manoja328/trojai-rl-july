@@ -109,7 +109,8 @@ class NLP2023MetaNetwork2(nn.Module):
     def __init__(self, raw_size=200, feat_size=60, hidden_size=22, nlayers_1=4, **kwargs):
         super().__init__()
         self.mlp_raw_to_feat = make_mlp(raw_size, feat_size, hidden_size, nlayers_1, nn.ReLU)
-        self.mlp_feat_to_pred = make_mlp(2 * feat_size + 1, 1, 30, 1, nn.ReLU) #adding reward at the end
+        # self.mlp_feat_to_pred = make_mlp(2 * feat_size + 1, 1, 30, 1, nn.ReLU) #adding reward at the end
+        self.mlp_feat_to_pred = make_mlp(2 * feat_size, 1, 30, 1, nn.ReLU) #adding reward at the end
         self.sigmoid = nn.Sigmoid()
 
     def intermediate(self, feat):
@@ -134,7 +135,7 @@ class NLP2023MetaNetwork2(nn.Module):
         out = torch.cat(out)
         rewards = [ entr['reward'] for entr in x]
         rewards = torch.stack(rewards)
-        out = torch.cat((out, rewards), dim=1)
+        # out = torch.cat((out, rewards), dim=1)
         out = self.mlp_feat_to_pred(out)
         return self.sigmoid(out)
 

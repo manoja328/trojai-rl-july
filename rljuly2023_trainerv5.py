@@ -18,7 +18,7 @@ from rljuly2023_featuresv5 import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def predict(saved_config):
+def predict(saved_config, raw_feat):
     scores = []
     with torch.no_grad():
         kfold_state_dicts = saved_config.pop("state_dicts")
@@ -54,13 +54,23 @@ class TrojFeatures(Dataset):
         # features = features / features.norm(2)
         episode = 0
         feats = features[episode]
-        fv = torch.stack(feats[self.feature_name]) # 21, 7, 7 , 3
+        if self.feature_name == "both":
+            fv1 = torch.stack(feats["value_grads"])
+            fv2 = torch.stack(feats["action_grads"])
+            fv = torch.cat((fv1.view(fv1.shape[0], -1), fv2.view(fv2.shape[0], -1)), dim=1)
+        elif self.feature_name == "action_grads_value":
+            fv1 = torch.FloatTensor(feats['values']).view(-1,1)
+            fv2 = torch.stack(feats["action_grads"])
+            fv = torch.cat((fv1, fv2.view(fv2.shape[0], -1)), dim=1)
+        else:
+            fv = torch.stack(feats[self.feature_name]) # 21, 7, 7 , 3
+            # import pdb; pdb.set_trace()
+
         feature_flat = fv.view(fv.shape[0], -1) # 21, 7*7*3
         final_reward = torch.FloatTensor([feats['final_reward']])
-        # import pdb; pdb.set_trace()
         # feature = torch.cat((feature, final_reward.unsqueeze(1)), dim=1)
         label = int(row.ground_truth == "triggered")
-        return {"feats": torch.FloatTensor(feature_flat), "reward": final_reward }, label
+        return {"feats": torch.FloatTensor(feature_flat), "reward": final_reward}, label
 
     def __len__(self):
         return len(self.data)
@@ -225,12 +235,24 @@ config.raw_size = 147 # 7x7x3
 config.feat_size = 30
 config.hidden_size = 60
 config.feature_name = "value_grads"
-train(config)
+# train(config)
 
 config.raw_size = 441 # 7x7x3x3
 config.feat_size = 30
 config.hidden_size = 60
 config.feature_name = "action_grads"
+# train(config)
+
+config.raw_size = 441 + 147 # 7x7x3x3
+config.feat_size = 30
+config.hidden_size = 60
+config.feature_name = "both"
+# train(config)
+
+config.raw_size = 441 + 1 # for value
+config.feat_size = 30
+config.hidden_size = 60
+config.feature_name = "action_grads_value"
 train(config)
 
 # sweep_id = wandb.sweep(sweep=sweep_configuration, project='rl_backdoor')

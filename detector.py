@@ -14,32 +14,60 @@ import pickle
 import numpy as np
 import torch
 from utils.abstract import AbstractDetector
-from utils.models import load_model, load_models_dirpath
+from utils.models import load_model, load_models_dirpath, load_ground_truth
 
 from utils import trojai_utils
 from utils.trojai_utils import *
+from utils.rljuly2023_utils import *
 
 import torch
 import torch_ac
 import gym
 from gym_minigrid.wrappers import ImgObsWrapper
 from scipy import stats
+from types import SimpleNamespace
+
+
+def get_features(features, feature_name):
+    episode = 0
+    feats = features[episode]
+    if feature_name == "both":
+        fv1 = torch.stack(feats["value_grads"])
+        fv2 = torch.stack(feats["action_grads"])
+        fv = torch.cat((fv1.view(fv1.shape[0], -1), fv2.view(fv2.shape[0], -1)), dim=1)
+    elif feature_name == "action_grads_value":
+        fv1 = torch.FloatTensor(feats['values']).view(-1,1)
+        fv2 = torch.stack(feats["action_grads"])
+        fv = torch.cat((fv1, fv2.view(fv2.shape[0], -1)), dim=1)
+    else:
+        fv = torch.stack(feats[feature_name]) # 21, 7, 7 , 3
+
+    feature_flat = fv.view(fv.shape[0], -1) # 21, 7*7*3
+    final_reward = torch.FloatTensor([feats['final_reward']])
+    return [{"feats": torch.FloatTensor(feature_flat), "reward": final_reward}]
 
 
 def predict(saved_config, raw_feat):
     scores = []
+    config = SimpleNamespace()
+    config.raw_size = 441 + 1 # for value
+    config.feat_size = 30
+    config.nlayers_1 = 1
+    config.hidden_size = 60
+    config.feature_name = "action_grads_value"
     with torch.no_grad():
         kfold_state_dicts = saved_config.pop("state_dicts")
         for fold_state in kfold_state_dicts:
             ## remaining is config params
-            model = NLP2023MetaNetwork(raw_size=100, feat_size=60, hidden_size=30, nlayers_1=1)
+            model = NLP2023MetaNetwork2(raw_size = config.raw_size, feat_size=config.feat_size,
+                                         hidden_size=config.hidden_size, nlayers_1=config.nlayers_1)
             model.load_state_dict(fold_state['state_dict'])
             score = model(raw_feat).squeeze().item()
             scores.append(score)
-    # majority voting
-    # trojan_probability = sum(scores) / len(scores)
     print(scores)
-    trojan_probability = stats.mode(scores).mode
+    # majority voting
+    trojan_probability = sum(scores) / len(scores)
+    # trojan_probability = stats.mode(scores).mode
     return float(trojan_probability)
 
 
@@ -109,6 +137,10 @@ class Detector(AbstractDetector):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logging.info("Using compute device: {}".format(device))
 
+        model_dirpath = '/'.join(model_filepath.split('/')[:-1])
+        is_poisoned = load_ground_truth(model_dirpath)
+        print("ground truth is poisoned ",is_poisoned)
+
         model.to(device)
         model.eval()
 
@@ -122,47 +154,71 @@ class Detector(AbstractDetector):
         # Run episodes through an environment to collect what may be relevant information to trojan detection
         # Construct environment and put it inside a observation wrapper
         env = ImgObsWrapper(gym.make(env_string))
-
-        episodes = 100
+        episodes = 1
         all_features = []
         final_rewards = []
         max_episode_length = 100
-        with torch.no_grad():
-            # Episode loop
-            for _ in range(episodes):
-                # Reset environment after episode and get initial observation
-                obs = env.reset()
-                done = False
-                # Per episode loop
-                features = []
-                while not done:
-                    ##add the trigger
-                    obs = ((obs + 10) % 256).astype(np.float)
-                    # Preprocessing function to prepare observation from env to be given to the model
-                    obs = preprocess([obs], device=device)
-                    # Use env observation to get action distribution
-                    dist, value = model(obs)
-                    # Sample from distribution to determine which action to take
-                    action = dist.sample()
-                    action = action.cpu().detach().numpy()
-                    # Use action to step environment and get new observation
-                    obs, reward, done, info = env.step(action)
-                    features.append(value.cpu().detach().item())
+        # Episode loop
+        for _ in range(episodes):
+            # Reset environment after episode and get initial observation
+            obs = env.reset()
+            done = False
+            # Per episode loop
+            value_grads = []
+            action_grads = []
+            logits = []
+            values = []
+            frame_number = 0
+            while not done:
+                # Preprocessing function to prepare observation from env to be given to the model
+                obs = preprocess([obs], device=device)
+                # Use env observation to get action distribution
+                dist, value, action_grad, value_grad = get_jacobian(model, obs)
+                
+                # (Pdb) action_grad.shape
+                # torch.Size([3, 1, 7, 7, 3])
+                # (Pdb) value_grad.shape
+                # torch.Size([1, 7, 7, 3])
+                # import pdb; pdb.set_trace()
+                # (Pdb) dist.logits
+                # tensor([[-1.9621, -0.1904, -3.4161]])
+                # (Pdb) value
+                # tensor([0.7015])
 
-                features.extend([0]*(max_episode_length- len(features)))
-                features[-1] = reward
-                all_features.append(features[:max_episode_length])
+                # Sample from distribution to determine which action to take
+                action = dist.sample()
+                action = action.cpu().detach().numpy()
+                values.append(value.item())
+                # Use action to step environment and get new observation
+                obs, reward, done, info = env.step(action)
+                action_grads.append(action_grad.squeeze().cpu().detach())
+                value_grads.append(value_grad.squeeze().cpu().detach())
+                logits.append(dist.logits)
+                frame_number += 1
+            
+            if reward == 0:
+                print(f"dead in {frame_number} steps")
+            else:
+                print(f"goal acheived in {frame_number} steps")
+
+            features = {"value_grads": value_grads,
+                        "action_grads": action_grads, 
+                        "final_reward": reward,
+                        "values": values,
+                        "logits": dist.logits,
+                        "ground_truth": is_poisoned,
+                        }
+            all_features.append(features)
 
 
-        all_features =  np.array(all_features)
-        print("feature shape ",all_features.shape)
-        fvs = [{"feats": torch.FloatTensor(all_features)}]
+
+        fvs = get_features(all_features,"action_grads_value")
 
         if self.learned_parameters_dirpath is not None:
             try:
-                ensemble = torch.load(os.path.join(self.learned_parameters_dirpath, 'bestrljuly2023_model.pth'))
+                ensemble = torch.load(os.path.join(self.learned_parameters_dirpath, 'bestrljuly2023_modelv5_jacobian.pth'))
             except:
-                ensemble = torch.load(os.path.join('/', self.learned_parameters_dirpath, 'bestrljuly2023_model.pth'))
+                ensemble = torch.load(os.path.join('/', self.learned_parameters_dirpath, 'bestrljuly2023_modelv5_jacobian.pth'))
 
             probability = predict(ensemble,fvs)
         else:

@@ -6,6 +6,7 @@ import json
 import torch.nn as nn
 import torch.nn.functional as F
 import torch
+import torch.autograd.functional as AF
 
 class RL2023july:
     def __init__(self, model_filepath, device="cpu"):
@@ -36,3 +37,18 @@ def get_metadata():
     import pandas as pd
     path = os.path.join(root(), 'METADATA.csv')
     return pd.read_csv(path)
+
+def get_jacobian(model, obs):
+    with torch.no_grad():
+        dist, value = model(obs)
+    def func_act(x):
+        return model(x)[0].logits.squeeze(dim=0)
+    def func_val(x):
+        return model(x)[1].squeeze(dim=0)
+    
+    # import pdb; pdb.set_trace()
+    with torch.set_grad_enabled(True):
+        action_grad = AF.jacobian(func_act,obs.float())
+        value_grad = AF.jacobian(func_val,obs.float())
+
+    return dist, value, action_grad, value_grad
