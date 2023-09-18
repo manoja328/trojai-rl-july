@@ -45,32 +45,18 @@ class TrojFeatures(Dataset):
     def __getitem__(self, idx):
         row = self.data.iloc[idx]
         SAVE_PATH = os.path.join(FEATS_DIR, f'{row.model_name}.pt')
-        features = torch.load(SAVE_PATH)
+        all_features = torch.load(SAVE_PATH)
         # # ## feature is nxd where n is the number of layers and d is the feature dimension
         # # ## get the first 100 eigenvales after SVD
         # svd.fit(features)
         # features = svd.singular_values_[:80]
         # features = torch.FloatTensor(features).unsqueeze(0)
         # features = features / features.norm(2)
-        episode = 0
-        feats = features[episode]
-        if self.feature_name == "both":
-            fv1 = torch.stack(feats["value_grads"])
-            fv2 = torch.stack(feats["action_grads"])
-            fv = torch.cat((fv1.view(fv1.shape[0], -1), fv2.view(fv2.shape[0], -1)), dim=1)
-        elif self.feature_name == "action_grads_value":
-            fv1 = torch.FloatTensor(feats['values']).view(-1,1)
-            fv2 = torch.stack(feats["action_grads"])
-            fv = torch.cat((fv1, fv2.view(fv2.shape[0], -1)), dim=1)
-        else:
-            fv = torch.stack(feats[self.feature_name]) # 21, 7, 7 , 3
-            # import pdb; pdb.set_trace()
-
-        feature_flat = fv.view(fv.shape[0], -1) # 21, 7*7*3
-        final_reward = torch.FloatTensor([feats['final_reward']])
+        import pdb; pdb.set_trace()
+        fvs = load_feature_dict(all_features, self.feature_name)
         # feature = torch.cat((feature, final_reward.unsqueeze(1)), dim=1)
         label = int(row.ground_truth == "triggered")
-        return {"feats": torch.FloatTensor(feature_flat), "reward": final_reward}, label
+        return fvs, label
 
     def __len__(self):
         return len(self.data)
@@ -106,7 +92,7 @@ def train(config=None):
         meta_df = get_metadata()
         # meta_df.iloc[0].poisoned
         ## k fold CV
-        skf = StratifiedKFold(n_splits=3)
+        skf = StratifiedKFold(n_splits=4)
         kfolds = skf.split(meta_df, meta_df.ground_truth)
         state_dicts = []
         for split_id, (train_index, test_index) in enumerate(kfolds):

@@ -134,7 +134,7 @@ def train(config=None):
         meta_df = get_metadata()
         # meta_df.iloc[0].poisoned
         ## k fold CV
-        skf = StratifiedKFold(n_splits=3)
+        skf = StratifiedKFold(n_splits=4)
         kfolds = skf.split(meta_df, meta_df.ground_truth)
         state_dicts = []
         for split_id, (train_index, test_index) in enumerate(kfolds):
@@ -218,7 +218,7 @@ def train(config=None):
         # final_save_dict.update(config)
         ## show all best acc of all folds
         best_val_aucs = [x['auc'] for x in state_dicts]
-        print(f"val aucs: {best_val_aucs}")
+        print(f"kfold best val aucs: {best_val_aucs} and mean: {np.mean(best_val_aucs)}")
         torch.save(final_save_dict, "bestrljuly2023_model.pth")
 
 

@@ -47,74 +47,12 @@ def infer(model_filepath):
     model.to(device)
     model.eval()
 
-    preprocess = torch_ac.format.default_preprocess_obss
-
     env_string = "MiniGrid-LavaCrossingS9N1-v0"
     logging.info('Evaluating on {}'.format(env_string))
-
     # Run episodes through an environment to collect what may be relevant information to trojan detection
-    # Construct environment and put it inside a observation wrapper
-    env = ImgObsWrapper(gym.make(env_string))
-
-    episodes = 1
-    all_features = []
-    final_rewards = []
-    max_episode_length = 100
-    # Episode loop
-    for _ in range(episodes):
-        # Reset environment after episode and get initial observation
-        obs = env.reset()
-        done = False
-        # Per episode loop
-        value_grads = []
-        action_grads = []
-        logits = []
-        values = []
-        frame_number = 0
-        while not done:
-            # Preprocessing function to prepare observation from env to be given to the model
-            obs = preprocess([obs], device=device)
-            # Use env observation to get action distribution
-            dist, value, action_grad, value_grad = get_jacobian(model, obs)
-            
-            # (Pdb) action_grad.shape
-            # torch.Size([3, 1, 7, 7, 3])
-            # (Pdb) value_grad.shape
-            # torch.Size([1, 7, 7, 3])
-            # import pdb; pdb.set_trace()
-            # (Pdb) dist.logits
-            # tensor([[-1.9621, -0.1904, -3.4161]])
-            # (Pdb) value
-            # tensor([0.7015])
-
-            # Sample from distribution to determine which action to take
-            action = dist.sample()
-            action = action.cpu().detach().numpy()
-            values.append(value.item())
-            # Use action to step environment and get new observation
-            obs, reward, done, info = env.step(action)
-            action_grads.append(action_grad.squeeze().cpu().detach())
-            value_grads.append(value_grad.squeeze().cpu().detach())
-            logits.append(dist.logits)
-            frame_number += 1
-        
-        if reward == 0:
-            print(f"dead in {frame_number} steps")
-        else:
-            print(f"goal acheived in {frame_number} steps")
-
-        features = {"value_grads": value_grads,
-                    "action_grads": action_grads, 
-                    "final_reward": reward,
-                    "values": values,
-                    "logits": dist.logits,
-                    "ground_truth": is_poisoned,
-                    }
-        all_features.append(features)
-
-    # import pdb; pdb.set_trace()
+    all_features =  get_jacobian_features(env_string, model)
     return all_features
-
+  
 
 if __name__ == '__main__':
 
