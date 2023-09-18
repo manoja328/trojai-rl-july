@@ -114,13 +114,8 @@ class Detector(AbstractDetector):
         # load the model
         model, model_repr, model_class = load_model(model_filepath)
 
-
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         logging.info("Using compute device: {}".format(device))
-
-        model_dirpath = '/'.join(model_filepath.split('/')[:-1])
-        is_poisoned = load_ground_truth(model_dirpath)
-        print("ground truth is poisoned ",is_poisoned)
 
         model.to(device)
         model.eval()
@@ -142,9 +137,8 @@ class Detector(AbstractDetector):
         else:
             probability = 0.5
 
-
         # clip the probability to reasonable values
-        probability = np.clip(probability, a_min=0.01, a_max=0.99)
+        probability = np.clip(probability, a_min=0.0, a_max=1.00)
 
         # Test scratch space
         with open(os.path.join(scratch_dirpath, 'test.txt'), 'a+') as fh:
