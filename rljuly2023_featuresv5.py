@@ -5,6 +5,8 @@ import torch
 import os
 import os, random
 from tqdm import tqdm
+
+
 from utils.rljuly2023_utils import *
 from utils.trojai_utils import *
 from utils.models import load_model, load_ground_truth
@@ -14,13 +16,14 @@ import torch_ac
 import gym
 from gym_minigrid.wrappers import ImgObsWrapper
 
-
-FEATS_DIR = '/workspace/manoj/rljuly2023_featuresv6'
-print("jacobians of everything ....")
+# FEATS_DIR = '/workspace/manoj/rljuly2023_featuresv6' # 10 episodes
+FEATS_DIR = '/workspace/manoj/rljuly2023_featuresv7' # 10 episodes +  add observation tensor
+# FEATS_DIR = '/workspace/manoj/rljuly2023_featuresv7_100eps'
+# FEATS_DIR = '/workspace/manoj/rljuly2023_featuresv8_nosample' # argmax instead of sampling from the output categorical distribution
+print("jacobians of everything: ",FEATS_DIR)
 os.makedirs(FEATS_DIR,exist_ok=True)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 
 def infer(model_filepath):
     """Method to predict whether a model is poisoned (1) or clean (0).
@@ -40,10 +43,6 @@ def infer(model_filepath):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info("Using compute device: {}".format(device))
 
-    model_dirpath = '/'.join(model_filepath.split('/')[:-1])
-    is_poisoned = load_ground_truth(model_dirpath)
-    print("ground truth is poisoned ",is_poisoned)
-
     model.to(device)
     model.eval()
 
@@ -59,6 +58,11 @@ if __name__ == '__main__':
     for model_idx in range(238):
         model_name =  'id-%08d' % model_idx
         model_filepath = os.path.join(root(),'models', model_name , 'model.pt')
+
+        model_dirpath = '/'.join(model_filepath.split('/')[:-1])
+        is_poisoned = load_ground_truth(model_dirpath)
+        print("ground truth is poisoned ",is_poisoned)
+
         all_features = infer(model_filepath)
         feat_path = os.path.join(FEATS_DIR, f'{model_name}.pt')
         torch.save(all_features, feat_path)
