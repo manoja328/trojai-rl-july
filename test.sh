@@ -11,7 +11,8 @@
 DIR="/workspace/manoj/trojai-datasets/rl-lavaworld-jul2023/models"
 
 for model_filepath in `ls $DIR`; do
-    echo $model_filepath
+    gt=`cat $DIR/$model_filepath/ground_truth.csv`
+    echo " ${model_filepath} ==> ground truth $gt "
     python entrypoint.py infer \
     --model_filepath=$DIR/$model_filepath/model.pt \
     --result_filepath=./output.txt \

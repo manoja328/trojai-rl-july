@@ -1,13 +1,15 @@
 python metafile_generator.py
 
+SIMG="rl-lavaworld-jul2023.simg"
+
 export APPTAINER_TMPDIR=/workspace/manoj/tmp/
-sudo -E apptainer build detector.simg detector.def
+sudo -E apptainer build $SIMG detector.def
 
 DIR=`pwd`
 
 singularity run \
 --bind $DIR \
---nv ./detector.simg infer \
+--nv $SIMG infer \
 --model_filepath=./rl-july-example/model.pt \
 --result_filepath=./output.txt \
 --scratch_dirpath=./scratch \
@@ -18,7 +20,7 @@ singularity run \
 --learned_parameters_dirpath=./learned_parameters/
 
 
-~/gdrive files upload detector.simg
+~/gdrive files upload $SIMG
 echo "=== === === === ==="
 echo "upload to google drive ...."
 echo "rename as:  nlp-question-answering-aug2023_sts_SRIweightv0.simg"

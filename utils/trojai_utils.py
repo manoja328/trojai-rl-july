@@ -11,6 +11,39 @@ import torch
 from sklearn.metrics import roc_auc_score
 
 
+def ent(logits,dim):
+    b = F.softmax(logits, dim) * F.log_softmax(logits, dim)
+    return -1.0 * b.sum(dim,keepdim=True)
+
+def compute_metrics(gt,scores):
+    """
+    Compute metrics based on ground truth values and scores.
+
+    Args:
+        gt (array-like): Ground truth values.
+        scores (array-like): Scores.
+
+    Returns:
+        tuple: A tuple containing the computed metrics.
+            - auc (float): The area under the ROC curve.
+            - ce (float): The cross-entropy.
+            - cestd (float): The cross-entropy standard deviation.
+
+    """
+    auc = roc_auc_score(gt, scores)
+    # sgt = F.logsigmoid(scores * (gt * 2 - 1))
+    # ce = -sgt.mean()
+    sgt = F.binary_cross_entropy_with_logits(scores, gt.float(), reduction='none')
+    ce = sgt.mean()
+    cestd = sgt.std() / len(sgt) ** 0.5
+    return auc, float(ce), float(cestd)
+
+def prepare_inputs(inputs, device):
+    for v in inputs:
+        if isinstance(v, torch.Tensor):
+            v = v.to(device)
+    return inputs
+
 ## A simple MLP with n layers
 ## it takes input_dim, output_dim, hidden_dim, n_layers, activation function
 ## it returns a torch.nn.Sequential object
@@ -105,6 +138,24 @@ class NLP2023MetaNetwork(nn.Module):
         out = self.mlp_feat_to_pred(out)
         return self.sigmoid(out)
 
+class NLP2023MetaNetwork_nointer(nn.Module):
+    def __init__(self, raw_size=200, feat_size=60, hidden_size=22, nlayers_1=4, **kwargs):
+        super().__init__()
+        self.mlp_raw_to_feat = make_mlp(raw_size, feat_size, hidden_size, nlayers_1, nn.ReLU)
+        self.mlp_feat_to_pred = make_mlp(feat_size, 1, 30, 1, nn.ReLU)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x):
+        """
+        :returns: a score for whether the network is a Trojan or not
+        """
+        out = [self.mlp_raw_to_feat(d['feats']) for d in x]
+        out = [torch.mean(d,dim=0,keepdim=True) for d in out] #mean pool across episodes B, neps, 60 --> B, 1, 60
+        out = torch.cat(out)
+        out = self.mlp_feat_to_pred(out)
+        return self.sigmoid(out)
+
+
 class NLP2023MetaNetwork2(nn.Module):
     def __init__(self, raw_size=200, feat_size=60, hidden_size=22, nlayers_1=4, **kwargs):
         super().__init__()
@@ -160,3 +211,140 @@ class NLP2023_Meta_LogFeats(nn.Module):
         out = torch.cat(out)
         out = self.mlp_feat_to_pred(out)
         return self.sigmoid(out)
+
+
+class NLP2023MetaNetwork2b(nn.Module):
+    def __init__(self, raw_size=200, feat_size=60, hidden_size=22, nlayers_1=4, **kwargs):
+        super().__init__()
+        self.mlp_raw_to_feat = make_mlp(raw_size, feat_size, hidden_size, nlayers_1, nn.ReLU)
+        # self.mlp_feat_to_pred = make_mlp(2 * feat_size + 1, 1, 30, 1, nn.ReLU) #adding reward at the end
+        self.mlp_feat_to_pred = make_mlp(feat_size, 1, 30, 1, nn.ReLU) #adding reward at the end
+        self.sigmoid = nn.Sigmoid()
+
+
+    def forward(self, x):
+        """
+        :returns: a score for whether the network is a Trojan or not
+        """
+        # import pdb; pdb.set_trace()
+        out = [self.mlp_raw_to_feat(d['feats']) for d in x] # MLP over all raw_features B, neps, 442 --> B, neps , 60
+        out = [torch.mean(d,dim=0,keepdim=True) for d in out] #mean pool across episodes B, neps, 60 --> B, 1, 60
+        out = torch.cat(out)
+        rewards = [ entr['reward'] for entr in x]
+        rewards = torch.stack(rewards)
+        # out = torch.cat((out, rewards), dim=1)
+        out = self.mlp_feat_to_pred(out)
+        return self.sigmoid(out)
+    
+
+class NLP2023MetaNetwork2diff(nn.Module):
+    def __init__(self, raw_size=200, feat_size=60, hidden_size=22, nlayers_1=4, **kwargs):
+        super().__init__()
+        self.raw_size = raw_size
+        self.mlp_raw_to_feat = make_mlp(raw_size, feat_size, hidden_size, nlayers_1, nn.ReLU)
+        # self.mlp_feat_to_pred = make_mlp(2 * feat_size + 1, 1, 30, 1, nn.ReLU) #adding reward at the end
+        self.mlp_feat_to_pred = make_mlp(feat_size, 1, 30, 1, nn.ReLU) #adding reward at the end
+
+
+    def forward(self, x):
+        """
+        :returns: a score for whether the network is a Trojan or not
+        """
+        # import pdb; pdb.set_trace()
+        # out = [ d['feats'][:,:self.raw_size] - d['feats'][:,self.raw_size:] for d in x] # MLP over all raw_features B, neps, 442 --> B, neps , 60
+        # out = [self.mlp_raw_to_feat(d) for d in out] # MLP over all raw_features B, neps, 442 --> B, neps , 60
+        
+        out = [self.mlp_raw_to_feat(d['feats']) for d in x] # MLP over all raw_features B, neps, 442 --> B, neps , 60
+        out = [torch.mean(d,dim=0,keepdim=True) for d in out] #mean pool across episodes B, neps, 60 --> B, 1, 60
+        out = torch.cat(out)
+        rewards = [ entr['reward'] for entr in x]
+        rewards = torch.stack(rewards)
+        # out = torch.cat((out, rewards), dim=1)
+        out = self.mlp_feat_to_pred(out)
+        return out
+    
+def load_feature_dict(features, feature_name):
+    episode = 0
+    feats = features[episode]
+    if feature_name == "both":
+        fv1 = torch.stack(feats["value_grads"])
+        fv2 = torch.stack(feats["action_grads"])
+        fv = torch.cat((fv1.view(fv1.shape[0], -1), fv2.view(fv2.shape[0], -1)), dim=1)
+    elif feature_name == "action_grads_value":
+        fv1 = torch.FloatTensor(feats['values']).view(-1,1)
+        fv2 = torch.stack(feats["action_grads"])
+        fv = torch.cat((fv1, fv2.view(fv2.shape[0], -1)), dim=1)
+    else:
+        fv = torch.stack(feats[feature_name]) # 21, 7, 7 , 3
+
+    feature_flat = fv.view(fv.shape[0], -1) # 21, 7*7*3
+    final_reward = torch.FloatTensor([feats['final_reward']])
+    return {"feats": torch.FloatTensor(feature_flat), "reward": final_reward}
+
+def load_feature_dict_neps(features, feature_name):
+    nepisodes = len(features)
+    all_episode_features = []
+    for episode in range(nepisodes):
+        feats = features[episode]
+        if feature_name == "value_grads_image":
+            fv1 = torch.stack(feats["value_grads"])
+            fv2 = feats["input_images"]
+            fv = torch.cat((fv1.view(fv1.shape[0], -1), fv2.view(fv2.shape[0], -1)), dim=1)
+        elif feature_name == "both":
+            fv1 = torch.stack(feats["value_grads"])
+            fv2 = torch.stack(feats["action_grads"])
+            fv = torch.cat((fv1.view(fv1.shape[0], -1), fv2.view(fv2.shape[0], -1)), dim=1)
+        elif feature_name == "both_diff":
+            fv1 = torch.stack(feats["value_grads"])
+            L  = len(fv1)
+            fv2 = torch.stack(feats["action_grads"])
+            fv3 = torch.stack(feats['logits']).view(L, -1)
+            index = torch.argmax(fv3,1)
+            fv2_chosen = []
+            for i,ind in enumerate(index):
+                fv2_chosen.append(fv2[i,ind,:,:,:])
+            fv2_chosen = torch.stack(fv2_chosen)
+            # diff = fv2_chosen - fv1
+            # import pdb; pdb.set_trace()
+            # print(fv1.shape, fv2.shape, fv3.shape)
+            # fv = torch.cat((fv2_chosen.view(L, -1), fv1.view(L, -1)), dim=1)
+            # fv = fv2_chosen.view(L, -1) -  fv1.view(L, -1)
+            fv = fv2_chosen.view(L, -1) #only best action grads
+            # fv = torch.mul(fv2_chosen, fv1).view(L, -1)
+
+        elif feature_name == "action_grads_value":
+            fv1 = torch.FloatTensor(feats['values']).view(-1,1)
+            fv2 = torch.stack(feats["action_grads"])
+            fv = torch.cat((fv1, fv2.view(fv2.shape[0], -1)), dim=1)
+        elif feature_name == "action_grads_value_logits":
+            fv1 = torch.FloatTensor(feats['values']).view(-1,1)
+            L  = len(fv1)
+            fv2 = torch.stack(feats["action_grads"])
+            fv3 = torch.stack(feats['logits']).view(L, -1)
+            # print(fv1.shape, fv2.shape, fv3.shape)
+            fv = torch.cat((fv1, fv3, fv2.view(fv2.shape[0], -1)), dim=1)
+        elif feature_name == "action_grads_value_entropy":
+            fv1 = torch.FloatTensor(feats['values']).view(-1,1)
+            fv2 = torch.stack(feats["action_grads"])
+            L  = len(fv1)
+            # import pdb; pdb.set_trace()
+            fv3 = torch.stack(feats['logits']).view(L, -1)
+            fv3_entropy = ent(fv3,dim=1)
+            # print(fv1.shape, fv2.shape, fv3.shape)
+            fv = torch.cat((fv1, fv3_entropy, fv2.view(fv2.shape[0], -1)), dim=1)
+        elif feature_name == "action_grads_valuediff":
+            fv1 = torch.stack(feats["value_grads"])
+            L  = len(fv1)
+            fv2 = torch.stack(feats["action_grads"])
+            fv3_diff = fv2 - torch.unsqueeze(fv1,1)
+            # print(fv1.shape, fv2.shape, fv3.shape)
+            fv = fv3_diff.view(L, -1)
+        else:
+            fv = torch.stack(feats[feature_name]) # 21, 7, 7 , 3
+
+        feature_flat = fv.view(fv.shape[0], -1) # 21, 7*7*3
+        all_episode_features.append(feature_flat)
+        final_reward = torch.FloatTensor([feats['final_reward']]) ##TODO: fix
+
+    all_episode_features_flat = torch.cat(all_episode_features)
+    return {"feats": all_episode_features_flat, "reward": final_reward}
